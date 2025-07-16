@@ -1,3 +1,15 @@
+// At the very TOP of server.js
+require('dotenv').config();
+
+console.log('=== ENVIRONMENT VARIABLES DEBUG ===');
+console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID);
+console.log('GOOGLE_CLIENT_SECRET:', process.env.GOOGLE_CLIENT_SECRET ? 'SET' : 'NOT SET');
+console.log('CLIENT_URL:', process.env.CLIENT_URL);
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('Current working directory:', process.cwd());
+console.log('__dirname:', __dirname);
+
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -48,12 +60,13 @@ app.use(session({
     mongoUrl: process.env.MONGODB_URI || 'mongodb://localhost:27017/zero-inventory'
   }),
   cookie: {
-    secure: process.env.NODE_ENV === 'production',
+    secure: false, // Always true for production (use https)
     httpOnly: true,
-    sameSite: 'lax', // Added for cross-origin session support
+    sameSite: 'lax', // Lax is best for cross-origin on localhost
     maxAge: 1000 * 60 * 60 * 24 * 7 // 1 week
   }
 }));
+// Debug environment variables
 
 // Passport middleware
 app.use(passport.initialize());
