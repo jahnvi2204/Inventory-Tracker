@@ -1,4 +1,4 @@
-// src/pages/Dashboard.js - Improved error handling
+// src/pages/Dashboard.js - Fixed Chart.js issues
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   Box,
@@ -45,8 +45,7 @@ import {
 } from 'chart.js';
 import dayjs from 'dayjs';
 import { checkAuthStatus, initiateGoogleLogin, logout } from '../store/slices/authSlice';
-import api, { clearRequestTracking } from '../services/api';
-import axios from 'axios';
+import api, { cancelAllRequests } from '../services/api';
 
 // CRITICAL: Register ALL Chart.js components properly
 ChartJS.register(
@@ -110,18 +109,18 @@ const Dashboard = () => {
         doughnutChartRef.current.destroy();
       }
       
-      clearRequestTracking();
+      cancelAllRequests();
     };
   }, []);
 
-  // Stable auth check with improved error handling
+  // Stable auth check with debouncing
   const checkAuth = useCallback(async () => {
     if (!mountedRef.current || authLoading || loadingRef.current) {
       return;
     }
 
     const now = Date.now();
-    if (now - lastLoadRef.current < 3000) { // Increased to 3 seconds
+    if (now - lastLoadRef.current < 2000) {
       return;
     }
     lastLoadRef.current = now;
@@ -129,10 +128,7 @@ const Dashboard = () => {
     try {
       await dispatch(checkAuthStatus()).unwrap();
     } catch (error) {
-      // Only log non-cancelled errors
-      if (!axios.isCancel(error)) {
-        console.error('Auth check failed:', error);
-      }
+      console.error('Auth check failed:', error);
     }
   }, [dispatch, authLoading]);
 
@@ -143,11 +139,11 @@ const Dashboard = () => {
         if (mountedRef.current) {
           checkAuth();
         }
-      }, 1000); // Increased delay
+      }, 500);
     }
   }, [initialized, authLoading, checkAuth]);
 
-  // Stable data loading with better error handling
+  // Stable data loading
   const loadDashboardData = useCallback(async () => {
     if (!isAuthenticated || !mountedRef.current || loadingRef.current) {
       return;
@@ -160,18 +156,10 @@ const Dashboard = () => {
     try {
       console.log('🔄 Loading dashboard data...');
       
-      // Step 1: Verify session (with timeout and cancel handling)
-      try {
-        const authCheck = await api.get('/auth/status');
-        if (!mountedRef.current) return;
-        console.log('✅ Session verified');
-      } catch (authError) {
-        if (axios.isCancel(authError)) {
-          console.log('Auth check cancelled, continuing...');
-        } else {
-          throw authError;
-        }
-      }
+      // Step 1: Verify session
+      const authCheck = await api.get('/auth/status');
+      if (!mountedRef.current) return;
+      console.log('✅ Session verified');
       
       // Step 2: Try to load products with different possible endpoints
       let productsResponse;
@@ -180,12 +168,9 @@ const Dashboard = () => {
       try {
         // First try the main products endpoint
         productsResponse = await api.get('/products', { 
-          params: { limit: 50 },
-          timeout: 12000
+          params: { limit: 50 }, // Get more products for better dashboard
+          timeout: 15000
         });
-        
-        if (!mountedRef.current) return;
-        
         console.log('✅ Products endpoint response:', productsResponse.data);
         
         // Handle different response structures from your Python API
@@ -236,22 +221,14 @@ const Dashboard = () => {
         }
         
       } catch (productsError) {
-        // Handle cancelled requests gracefully
-        if (axios.isCancel(productsError)) {
-          console.log('Products request cancelled');
-          return;
-        }
-        
         console.warn('⚠️ Main products endpoint failed, trying inventory endpoint');
         
         try {
           // Try inventory endpoint as backup
           productsResponse = await api.get('/inventory/products', { 
             params: { limit: 50 },
-            timeout: 12000
+            timeout: 15000
           });
-          
-          if (!mountedRef.current) return;
           
           if (productsResponse.data && Array.isArray(productsResponse.data)) {
             productData = productsResponse.data;
@@ -264,11 +241,6 @@ const Dashboard = () => {
           }
           
         } catch (inventoryError) {
-          if (axios.isCancel(inventoryError)) {
-            console.log('Inventory request cancelled');
-            return;
-          }
-          
           console.error('❌ Both endpoints failed:', productsError.message, inventoryError.message);
           throw productsError; // Throw original error
         }
@@ -276,12 +248,6 @@ const Dashboard = () => {
       
     } catch (error) {
       if (!mountedRef.current) return;
-      
-      // Handle cancelled requests gracefully
-      if (axios.isCancel(error)) {
-        console.log('Dashboard load cancelled');
-        return;
-      }
       
       console.error('⚠️ Load failed:', error.message);
       console.error('Error details:', error.response?.data);
@@ -345,14 +311,14 @@ const Dashboard = () => {
     }
   }, [isAuthenticated]);
 
-  // Load data when authenticated (with increased debouncing)
+  // Load data when authenticated (with debouncing)
   useEffect(() => {
     if (isAuthenticated && !authLoading) {
       const timer = setTimeout(() => {
         if (mountedRef.current) {
           loadDashboardData();
         }
-      }, 2000); // Increased to 2 seconds
+      }, 1000);
       
       return () => clearTimeout(timer);
     }
@@ -371,7 +337,7 @@ const Dashboard = () => {
   const handleLogout = async () => {
     try {
       await dispatch(logout()).unwrap();
-      clearRequestTracking();
+      cancelAllRequests();
       window.location.href = '/login';
     } catch (error) {
       console.error('Logout failed:', error);
@@ -675,7 +641,7 @@ const Dashboard = () => {
         <Alert severity="warning" sx={{ mb: 2 }}>
           <Typography variant="subtitle2">⚠️ Connection Issue Detected</Typography>
           <Typography variant="body2">
-            API connection issue detected. Using fallback data.
+            Rapid connect/disconnect detected. This can cause session instability.
             {productsError && <><br/>Error: {productsError}</>}
           </Typography>
         </Alert>
@@ -725,7 +691,7 @@ const Dashboard = () => {
         <Grid item xs={12} sm={6} md={3}>
           <StatCard
             title="Total Value"
-            value={`${totalValue.toLocaleString()}`}
+            value={`$${totalValue.toLocaleString()}`}
             icon={<AttachMoney sx={{ color: 'success.main' }} />}
             color="success"
           />
@@ -785,50 +751,14 @@ const Dashboard = () => {
             </Typography>
             {products.length > 0 ? (
               <List>
-                {products.slice(0, 8).map((product, index) => (
+                {products.slice(0, 5).map((product, index) => (
                   <ListItem key={product._id || index} divider>
                     <ListItemText
-                      primary={
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Typography variant="subtitle1">
-                            {product.name || 'Unnamed Product'}
-                          </Typography>
-                          {product.lowStock && (
-                            <Chip label="Low Stock" color="warning" size="small" />
-                          )}
-                          {product.nearExpiry && (
-                            <Chip label="Near Expiry" color="error" size="small" sx={{ ml: 1 }} />
-                          )}
-                        </Box>
-                      }
-                      secondary={
-                        <Box>
-                          <Typography variant="body2" color="text.secondary">
-                            Qty: {product.quantity || 0} | Min: {product.minQuantity || 0} | 
-                            Price: ${parseFloat(product.price?.selling || product.price || 0).toFixed(2)}
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            Category: {product.category || 'Unknown'} | 
-                            Value: ${parseFloat(product.totalValue || 0).toFixed(2)}
-                          </Typography>
-                          {product.location && (
-                            <Typography variant="caption" color="text.secondary">
-                              Location: {product.location}
-                            </Typography>
-                          )}
-                        </Box>
-                      }
+                      primary={product.name || 'Unnamed Product'}
+                      secondary={`Quantity: ${product.quantity || 0} | Price: $${product.price?.selling || product.price || 0}`}
                     />
                   </ListItem>
                 ))}
-                {products.length > 8 && (
-                  <ListItem>
-                    <ListItemText
-                      primary={`... and ${products.length - 8} more products`}
-                      secondary={connectionIssue ? 'Demo data for demonstration' : 'Data from backend API'}
-                    />
-                  </ListItem>
-                )}
               </List>
             ) : (
               <Typography variant="body2" color="text.secondary">

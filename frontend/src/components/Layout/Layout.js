@@ -1,24 +1,34 @@
 import React from 'react';
-import { Outlet, Link, useLocation } from 'react-router-dom';
+import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
 import { Box, Drawer, List, ListItem, ListItemIcon, ListItemText, AppBar, Toolbar, Typography, CssBaseline, IconButton, Tooltip } from '@mui/material';
 import { Dashboard, Inventory2, BarChart, QrCodeScanner, People, Settings, Logout, Assessment, LightMode, DarkMode } from '@mui/icons-material';
 import { useThemeMode } from '../../context/ThemeContext';
+import { useDispatch } from 'react-redux';
+import { logout } from '../../store/slices/authSlice';
 
 const drawerWidth = 220;
 
 const navItems = [
   { text: 'Dashboard', icon: <Dashboard />, path: '/dashboard' },
-  { text: 'Inventory', icon: <Inventory2 />, path: '/inventory' },
-  { text: 'Scanner', icon: <QrCodeScanner />, path: '/scanner' },
-  { text: 'Analytics', icon: <BarChart />, path: '/analytics' },
-  { text: 'Reports', icon: <Assessment />, path: '/reports' },
-  { text: 'Users', icon: <People />, path: '/users' },
-  { text: 'Settings', icon: <Settings />, path: '/settings' },
+  { text: 'Inventory', icon: <Inventory2 />, path: '/dashboard/inventory' },
+  { text: 'Scanner', icon: <QrCodeScanner />, path: '/dashboard/scanner' },
+  { text: 'Analytics', icon: <BarChart />, path: '/dashboard/analytics' },
+  { text: 'Reports', icon: <Assessment />, path: '/dashboard/reports' },
+  { text: 'Users', icon: <People />, path: '/dashboard/users' },
+  { text: 'Settings', icon: <Settings />, path: '/dashboard/settings' },
 ];
 
 const Layout = () => {
   const location = useLocation();
   const { darkMode, toggleDarkMode } = useThemeMode();
+  const navigate = useNavigate();
+  const dispatch = useDispatch();
+
+  const handleLogout = async () => {
+    await dispatch(logout());
+    localStorage.removeItem('token');
+    navigate('/login');
+  };
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', background: 'linear-gradient(135deg, #0a0a0a 60%, #2d0b4e 100%)' }}>
@@ -62,7 +72,7 @@ const Layout = () => {
               <ListItemText primary={item.text} />
             </ListItem>
           ))}
-          <ListItem button sx={{ mt: 2, color: '#fff' }}>
+          <ListItem button sx={{ mt: 2, color: '#fff' }} onClick={handleLogout}>
             <ListItemIcon sx={{ color: 'inherit' }}><Logout /></ListItemIcon>
             <ListItemText primary="Logout" />
           </ListItem>

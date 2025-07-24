@@ -6,6 +6,8 @@ const { isAuthenticated } = require('../middleware/auth');
 const User = require('../models/User');
 const Organization = require('../models/Organization');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret';
 
 console.log('=== AUTH ROUTES LOADING ===');
 
@@ -161,15 +163,24 @@ router.post('/register', async (req, res) => {
     // Log in user
     req.login(user, (err) => {
       if (err) return res.status(500).json({ success: false, message: 'Login after registration failed.' });
-      res.json({ success: true, user: {
-        id: user._id,
-        email: user.email,
-        name: user.name,
-        avatar: user.avatar,
-        role: user.role,
-        organization: user.organization,
-        preferences: user.preferences
-      }});
+      const token = jwt.sign(
+        { id: user._id, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+      res.json({
+        success: true,
+        user: {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          avatar: user.avatar,
+          role: user.role,
+          organization: user.organization,
+          preferences: user.preferences
+        },
+        token
+      });
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -196,15 +207,24 @@ router.post('/login', async (req, res) => {
     // Log in user
     req.login(user, (err) => {
       if (err) return res.status(500).json({ success: false, message: 'Login failed.' });
-      res.json({ success: true, user: {
-        id: user._id,
-        email: user.email,
-        name: user.name,
-        avatar: user.avatar,
-        role: user.role,
-        organization: user.organization,
-        preferences: user.preferences
-      }});
+      const token = jwt.sign(
+        { id: user._id, email: user.email, role: user.role },
+        JWT_SECRET,
+        { expiresIn: '7d' }
+      );
+      res.json({
+        success: true,
+        user: {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          avatar: user.avatar,
+          role: user.role,
+          organization: user.organization,
+          preferences: user.preferences
+        },
+        token
+      });
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

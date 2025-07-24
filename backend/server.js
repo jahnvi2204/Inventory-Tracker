@@ -24,10 +24,11 @@ const MongoStore = require('connect-mongo');
 
 // Route imports
 const authRoutes = require('./routes/Auth');
-const inventoryRoutes = require('./routes/Inventory');
+const inventoryRouter = require('./routes/Inventory');
 const analyticsRoutes = require('./routes/Analytics');
 const userRoutes = require('./routes/Users');
 const exportRoutes = require('./routes/export');
+const productsRouter = require('./routes/Products');
 
 // Load environment variables
 dotenv.config();
@@ -98,10 +99,11 @@ app.set('io', io);
 
 // Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/inventory', inventoryRoutes);
+app.use('/api', inventoryRouter);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/export', exportRoutes);
+app.use('/api/products', productsRouter);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

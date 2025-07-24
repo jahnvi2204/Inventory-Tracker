@@ -1,5 +1,5 @@
-// src/App.js
-import React, { useEffect } from 'react';
+// src/App.js - Fixed version
+import React, { useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
@@ -26,16 +26,23 @@ import Users from './pages/Users';
 import ProductDetail from './pages/ProductDetail';
 import Home from './pages/Home';
 
-// Actions
-import { checkAuth } from './store/slices/authSlice';
+// Actions - FIXED: Import the correct action name
+import { checkAuthStatus } from './store/slices/authSlice';
 
 // Add import for socket module
 import socket from './socket';
 
+// API cleanup
+
+
 function AppContent() {
   const dispatch = useDispatch();
-  const { isAuthenticated, user } = useSelector((state) => state.auth);
+  const { isAuthenticated, user, initialized } = useSelector((state) => state.auth);
   const { darkMode } = useThemeMode();
+  
+  // Refs to prevent duplicate operations
+  const socketConnectedRef = useRef(false);
+  const authCheckedRef = useRef(false);
 
   const muiTheme = React.useMemo(
     () =>
@@ -69,32 +76,101 @@ function AppContent() {
     [darkMode]
   );
 
- useEffect(() => {
-  if (isAuthenticated && user?.organization) {
-    // Use the socket instance from the module
-    if (!socket.connected) {
-      socket.connect();
+  // Initial auth check with stability
+  useEffect(() => {
+    if (!initialized && !authCheckedRef.current) {
+      authCheckedRef.current = true;
+      console.log('🔍 Checking initial auth status...');
+      
+      // Add delay to prevent React StrictMode double-execution issues
+      const timer = setTimeout(() => {
+        dispatch(checkAuthStatus());
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [dispatch, initialized]);
+
+  // Socket connection management with stability
+  useEffect(() => {
+    if (isAuthenticated && user?.organization && !socketConnectedRef.current) {
+      socketConnectedRef.current = true;
+      console.log('🔌 Setting up socket connection...');
+      
+      const setupSocket = () => {
+        if (!socket.connected) {
+          socket.connect();
+        }
+        
+        const handleConnect = () => {
+          console.log('✅ Socket connected to server');
+          socket.emit('join-organization', user.organization);
+        };
+        
+        const handleDisconnect = () => {
+          console.log('❌ Socket disconnected from server');
+          socketConnectedRef.current = false;
+        };
+        
+        const handleConnectError = (error) => {
+          console.error('🔌 Socket connection error:', error?.message || error);
+          socketConnectedRef.current = false;
+        };
+        
+        socket.on('connect', handleConnect);
+        socket.on('disconnect', handleDisconnect);
+        socket.on('connect_error', handleConnectError);
+        
+        // If already connected, join organization immediately
+        if (socket.connected) {
+          handleConnect();
+        }
+      };
+      
+      // Delay to prevent rapid reconnections and reduce timeout errors
+      const timer = setTimeout(setupSocket, 2000); // Increased delay
+      
+      return () => {
+        clearTimeout(timer);
+        console.log('🧹 Cleaning up socket connections...');
+        
+        socket.off('connect');
+        socket.off('disconnect');
+        socket.off('connect_error');
+        
+        if (socket.connected) {
+          socket.disconnect();
+        }
+        socketConnectedRef.current = false;
+      };
     }
     
-    const handleConnect = () => {
-      console.log('Connected to server');
-      socket.emit('join-organization', user.organization);
-    };
-    
-    socket.on('connect', handleConnect);
-    
-    // Always return a cleanup function
-    return () => {
-      socket.off('connect', handleConnect);
+    // If not authenticated but socket was connected, clean up
+    if (!isAuthenticated && socketConnectedRef.current) {
+      console.log('🔌 User not authenticated, disconnecting socket...');
+      
       if (socket.connected) {
         socket.disconnect();
       }
+      socketConnectedRef.current = false;
+    }
+    
+    return () => {}; // Always return cleanup function
+  }, [isAuthenticated, user?.organization]);
+
+  // Global cleanup on app unmount
+  useEffect(() => {
+    return () => {
+     
+      
+      if (socket.connected) {
+        socket.disconnect();
+      }
+      socketConnectedRef.current = false;
+      authCheckedRef.current = false;
     };
-  }
-  
-  // Return empty cleanup function when condition is false
-  return () => {};
-}, [isAuthenticated, user]);
+  }, []);
+
   return (
     <ThemeProvider theme={muiTheme}>
       <CssBaseline />

@@ -44,7 +44,7 @@ import {
  
 } from '@mui/icons-material';
 import { ThemeProvider, createTheme, keyframes } from '@mui/material/styles';
-import { checkAuth } from '../store/slices/authSlice';
+import { checkAuthStatus } from '../store/slices/authSlice';
 
 const Login = () => {
   const navigate = useNavigate();
@@ -131,7 +131,7 @@ const Login = () => {
 
   // Check authentication status ONCE on mount
   useEffect(() => {
-    dispatch(checkAuth());
+    dispatch(checkAuthStatus());
     // Only run once on mount
     // eslint-disable-next-line
   }, []);
@@ -141,6 +141,12 @@ const Login = () => {
       const from = location.state?.from?.pathname || '/dashboard';
       navigate(from, { replace: true });
       return;
+    } else {
+      console.log('❌ User is not authenticated');
+      if (window.location.pathname !== '/login') {
+        navigate('/login', { replace: true });
+      }
+      dispatch({ type: 'AUTH_CLEAR' });
     }
 
     // Animate elements sequentially
@@ -187,7 +193,8 @@ const Login = () => {
       
       const data = await response.json();
       
-      if (data.success) {
+      if (data.success && data.token) {
+        localStorage.setItem('token', data.token);
         dispatch({ type: 'AUTH_SUCCESS', payload: data.user });
         const from = location.state?.from?.pathname || '/dashboard';
         navigate(from, { replace: true });

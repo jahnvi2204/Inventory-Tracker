@@ -24,20 +24,37 @@ module.exports = function(passport) {
   
   passport.serializeUser((user, done) => {
     console.log('=== SERIALIZE USER ===');
-    console.log('Serializing user ID:', user.id);
-    done(null, user.id);
+    console.log('Serializing user ID:', user._id);
+    console.log('User object type:', typeof user);
+    console.log('User constructor:', user.constructor.name);
+    
+    if (!user._id) {
+      console.error('❌ User._id is missing during serialization');
+      return done(new Error('User ID missing'), null);
+    }
+    
+    done(null, user._id);
   });
 
   passport.deserializeUser(async (id, done) => {
     console.log('=== DESERIALIZE USER ===');
     console.log('Deserializing user ID:', id);
+    console.log('ID type:', typeof id);
     
     try {
       const user = await User.findById(id);
       console.log('Found user:', user ? user.email : 'Not found');
+      
+      if (!user) {
+        console.log('❌ User not found in database for ID:', id);
+        return done(null, false);
+      }
+      
+      console.log('✅ User successfully deserialized:', user.email);
       done(null, user);
     } catch (err) {
-      console.error('Deserialize error:', err);
+      console.error('❌ Deserialize error:', err);
+      console.error('Error stack:', err.stack);
       done(err, null);
     }
   });
@@ -107,9 +124,23 @@ module.exports = function(passport) {
         }
       }
       
+      // Validate user object before returning
+      if (!user || !user._id) {
+        console.error('❌ Invalid user object created/retrieved:', user);
+        return done(new Error('Invalid user object'), null);
+      }
+      
+      console.log('✅ User object validated:', {
+        id: user._id,
+        email: user.email,
+        name: user.name,
+        hasId: !!user._id
+      });
+      
       return done(null, user);
     } catch (error) {
-      console.error('Google strategy error:', error);
+      console.error('❌ Google strategy error:', error);
+      console.error('Error stack:', error.stack);
       return done(error, null);
     }
   }));

@@ -1,0 +1,6 @@
+ProductID,Name,CategoryID,Category,Price,Quantity,MinQuantity,ExpiryDate,SupplierID,Barcode,Description,Location,Status
+P001,"Laptop Pro 15""",ELEC,Electronics,1299.99,45,10,2026-07-17,SUP001,123456789012,High-performance laptop for professionals,A1-01,Active
+P002,Wireless Mouse,ELEC,Electronics,29.99,120,50,,SUP002,123456789013,Ergonomic wireless mouse with precision tracking,B2-15,Active
+P003,USB Cable,ELEC,Electronics,9.99,500,100,,SUP001,123456789014,Durable USB-C cable 1m length,C3-22,Active
+P004,"Monitor 24""",ELEC,Electronics,299.99,30,5,2025-08-16,SUP003,123456789015,Full HD monitor with IPS panel,A1-05,Active
+P005,Keyboard Mechanical,ELEC,Electronics,89.99,75,20,,SUP002,123456789016,Mechanical keyboard with RGB backlighting,B2-18,Active

@@ -1,485 +1,711 @@
-// src/pages/Analytics.js
-import React, { useState, useEffect } from 'react';
+// src/pages/Analytics.js - Fixed to fetch real products like Dashboard
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
-  Paper,
   Typography,
+  Paper,
   Grid,
   Card,
   CardContent,
-  Button,
-  TextField,
-  MenuItem,
-  Chip,
   Alert,
   LinearProgress,
-  List,
-  ListItem,
-  ListItemIcon,
-  ListItemText,
-  Divider,
   IconButton,
   Tooltip,
+  Button,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Chip,
 } from '@mui/material';
 import {
+  Refresh,
   TrendingUp,
   TrendingDown,
-  Lightbulb,
-  Psychology,
-  Timeline,
+  Assessment,
   PieChart,
   BarChart,
-  AutoGraph,
-  Download,
-  DateRange,
+  Timeline,
+  Warning,
+  CheckCircle,
+  Error,
+  Schedule,
 } from '@mui/icons-material';
-import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import { Line, Bar, Doughnut, Scatter } from 'react-chartjs-2';
+import { useSelector } from 'react-redux';
+import { Line, Bar, Doughnut, Pie } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  ArcElement,
+  Title,
+  Tooltip as ChartTooltip,
+  Legend,
+} from 'chart.js';
 import dayjs from 'dayjs';
-import { useSelector, useDispatch } from 'react-redux';
-import { useSnackbar } from 'notistack';
 import api from '../services/api';
+import axios from 'axios';
+
+// Register Chart.js components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  BarElement,
+  ArcElement,
+  Title,
+  ChartTooltip,
+  Legend
+);
 
 const Analytics = () => {
-  const dispatch = useDispatch();
-  const { enqueueSnackbar } = useSnackbar();
-  const { products } = useSelector((state) => state.inventory);
-  const { theme } = useSelector((state) => state.settings);
-
+  const { user, isAuthenticated } = useSelector((state) => state.auth || {});
+  
+  const mountedRef = useRef(true);
+  const loadingRef = useRef(false);
+  
+  // State management
+  const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [aiInsights, setAiInsights] = useState([]);
-  const [dateRange, setDateRange] = useState({
-    startDate: dayjs().subtract(30, 'days'),
-    endDate: dayjs(),
+  const [error, setError] = useState(null);
+  const [lastFetch, setLastFetch] = useState(null);
+  const [timeRange, setTimeRange] = useState('30');
+
+  // Analytics data
+  const [analytics, setAnalytics] = useState({
+    totalValue: 0,
+    categoryDistribution: {},
+    stockLevels: {},
+    expiryAnalysis: {},
+    trends: [],
+    alerts: {
+      lowStock: 0,
+      nearExpiry: 0,
+      expired: 0
+    }
   });
-  const [selectedMetric, setSelectedMetric] = useState('all');
-  const [predictions, setPredictions] = useState({});
 
+  // Chart refs for cleanup
+  const lineChartRef = useRef(null);
+  const barChartRef = useRef(null);
+  const doughnutChartRef = useRef(null);
+  const pieChartRef = useRef(null);
+
+  // Cleanup on unmount
   useEffect(() => {
-    fetchAnalytics();
-    generateAIInsights();
-  }, [dateRange, products]);
-
-  const fetchAnalytics = async () => {
-    setLoading(true);
-    try {
-      const response = await api.get('/analytics/data', {
-        params: {
-          startDate: dateRange.startDate.toISOString(),
-          endDate: dateRange.endDate.toISOString(),
-        },
-      });
-      // Process analytics data
-    } catch (error) {
-      enqueueSnackbar('Error fetching analytics', { variant: 'error' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const generateAIInsights = async () => {
-    // Simulate AI analysis
-    const insights = [];
-
-    // Analyze stock trends
-    const lowStockItems = products.filter(p => p.alerts?.lowStock);
-    if (lowStockItems.length > 0) {
-      insights.push({
-        type: 'warning',
-        title: 'Low Stock Alert',
-        description: `${lowStockItems.length} products are running low. Consider reordering soon.`,
-        action: 'View Low Stock Items',
-        priority: 'high',
-      });
-    }
-
-    // Analyze expiry patterns
-    const expiringItems = products.filter(p => p.alerts?.nearExpiry);
-    if (expiringItems.length > 0) {
-      insights.push({
-        type: 'alert',
-        title: 'Expiry Management',
-        description: `${expiringItems.length} products expiring within 30 days. Consider promotions or donations.`,
-        action: 'Manage Expiring Items',
-        priority: 'high',
-      });
-    }
-
-    // Analyze sales velocity
-    const fastMoving = products.filter(p => {
-      // Simulate fast-moving calculation based on quantity changes
-      return p.quantity < p.minQuantity * 2;
-    });
+    mountedRef.current = true;
     
-    if (fastMoving.length > 0) {
-      insights.push({
-        type: 'success',
-        title: 'Fast-Moving Products',
-        description: `${fastMoving.length} products are selling quickly. Ensure adequate stock levels.`,
-        action: 'Analyze Trends',
-        priority: 'medium',
-      });
+    return () => {
+      mountedRef.current = false;
+      loadingRef.current = false;
+      
+      // Destroy charts
+      if (lineChartRef.current) {
+        lineChartRef.current.destroy();
+      }
+      if (barChartRef.current) {
+        barChartRef.current.destroy();
+      }
+      if (doughnutChartRef.current) {
+        doughnutChartRef.current.destroy();
+      }
+      if (pieChartRef.current) {
+        pieChartRef.current.destroy();
+      }
+    };
+  }, []);
+
+  // Load data on component mount
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadAnalyticsData();
+    }
+  }, [isAuthenticated, timeRange]);
+
+  // Load analytics data - same as Dashboard/Inventory
+  const loadAnalyticsData = useCallback(async () => {
+    if (!isAuthenticated || !mountedRef.current || loadingRef.current) {
+      return;
     }
 
-    // Category optimization
-    const categories = [...new Set(products.map(p => p.category))];
-    const categoryStats = categories.map(cat => ({
-      category: cat,
-      count: products.filter(p => p.category === cat).length,
-      value: products.filter(p => p.category === cat).reduce((sum, p) => sum + (p.quantity * p.price.selling), 0),
-    }));
+    loadingRef.current = true;
+    setLoading(true);
+    setError(null);
+    
+    try {
+      console.log('🔄 Loading analytics data...');
+      
+      // Step 1: Verify session
+      try {
+        await api.get('/auth/status');
+        if (!mountedRef.current) return;
+        console.log('✅ Session verified for analytics');
+      } catch (authError) {
+        if (axios.isCancel(authError)) {
+          console.log('Auth check cancelled');
+        } else {
+          throw authError;
+        }
+      }
+      
+      // Step 2: Try to load products for analytics
+      let productsResponse;
+      let productData = [];
+      
+      try {
+        // First try the main products endpoint
+        productsResponse = await api.get('/products', { 
+          params: { limit: 1000 }, // Get all products for complete analytics
+          timeout: 15000
+        });
+        
+        if (!mountedRef.current) return;
+        
+        console.log('✅ Analytics products response:', productsResponse.data);
+        
+        // Handle different response structures from Python API
+        if (productsResponse.data) {
+          if (Array.isArray(productsResponse.data)) {
+            productData = productsResponse.data;
+          } else if (productsResponse.data.products) {
+            productData = productsResponse.data.products;
+          } else if (productsResponse.data.data) {
+            productData = productsResponse.data.data;
+          } else if (productsResponse.data.items) {
+            productData = productsResponse.data.items;
+          }
+        }
+        
+        // Transform the data for analytics
+        if (Array.isArray(productData) && productData.length > 0) {
+          const transformedProducts = productData.map((product, index) => ({
+            id: product.id || product._id || index,
+            name: product.Name || product.name || product.ProductName || `Product ${index + 1}`,
+            quantity: parseInt(product.Quantity) || parseInt(product.quantity) || 0,
+            minQuantity: parseInt(product.MinQuantity) || parseInt(product.minQuantity) || 10,
+            price: parseFloat(product.Price) || parseFloat(product.price) || 0,
+            totalValue: parseFloat(product.TotalValue) || parseFloat(product.total_value) || 0,
+            category: product.Category || product.category || product.CategoryID || 'Unknown',
+            categoryId: product.CategoryID || product.category_id || 0,
+            location: product.Location || product.location || '',
+            status: product.Status || product.status || 'active',
+            expiryDate: product.ExpiryDate || product.expiry_date,
+            modifyDate: product.ModifyDate || product.modify_date || product.updatedAt,
+            lowStock: product.LowStock || product.low_stock || false,
+            nearExpiry: product.NearExpiry || product.near_expiry || false,
+            expired: product.Expired || product.expired || false,
+            daysToExpiry: parseInt(product.DaysToExpiry) || parseInt(product.days_to_expiry) || null,
+            resistant: product.Resistant || product.resistant || false,
+            isAllergic: product.IsAllergic || product.is_allergic || false,
+            vitalityDays: parseInt(product.VitalityDays) || parseInt(product.vitality_days) || null
+          }));
+          
+          console.log('🔄 Transformed analytics products:', transformedProducts.length);
+          setProducts(transformedProducts);
+          
+          // Generate analytics from product data
+          generateAnalytics(transformedProducts);
+          
+          setLastFetch(new Date().toISOString());
+          console.log('✅ Analytics data processed:', transformedProducts.length);
+        } else {
+          throw new Error('No products found for analytics');
+        }
+        
+      } catch (productsError) {
+        if (axios.isCancel(productsError)) {
+          console.log('Analytics products request cancelled');
+          return;
+        }
+        
+        console.warn('⚠️ Main products endpoint failed, trying alternatives');
+        
+        try {
+          // Try analytics endpoint if available
+          const analyticsResponse = await api.get('/analytics/summary', { 
+            timeout: 10000
+          });
+          
+          if (!mountedRef.current) return;
+          
+          if (analyticsResponse.data) {
+            console.log('✅ Analytics endpoint response received');
+            // Process analytics response if available
+            processAnalyticsResponse(analyticsResponse.data);
+          } else {
+            throw new Error('Analytics endpoint failed');
+          }
+          
+        } catch (analyticsError) {
+          if (axios.isCancel(analyticsError)) {
+            console.log('Analytics request cancelled');
+            return;
+          }
+          
+          console.error('❌ All analytics endpoints failed:', productsError.message, analyticsError.message);
+          throw productsError;
+        }
+      }
+      
+    } catch (error) {
+      if (!mountedRef.current) return;
+      
+      if (axios.isCancel(error)) {
+        console.log('Analytics load cancelled');
+        return;
+      }
+      
+      console.error('⚠️ Analytics load failed:', error.message);
+      setError(`Failed to load analytics: ${error.message}`);
+      
+      // Use fallback data for demo
+      generateFallbackAnalytics();
+      
+    } finally {
+      if (mountedRef.current) {
+        setLoading(false);
+        loadingRef.current = false;
+      }
+    }
+  }, [isAuthenticated, timeRange]);
 
-    const topCategory = categoryStats.sort((a, b) => b.value - a.value)[0];
-    insights.push({
-      type: 'info',
-      title: 'Category Performance',
-      description: `"${topCategory.category}" is your top-performing category with ${topCategory.value.toLocaleString()} in inventory value.`,
-      action: 'View Category Analysis',
-      priority: 'low',
+  // Generate analytics from product data
+  const generateAnalytics = (productList) => {
+    // Calculate total value
+    const totalValue = productList.reduce((sum, product) => {
+      return sum + (product.totalValue || (product.quantity * product.price));
+    }, 0);
+
+    // Category distribution
+    const categoryDistribution = {};
+    const categoryValues = {};
+    productList.forEach(product => {
+      const category = product.category || 'Unknown';
+      categoryDistribution[category] = (categoryDistribution[category] || 0) + 1;
+      categoryValues[category] = (categoryValues[category] || 0) + (product.totalValue || (product.quantity * product.price));
     });
 
-    // Seasonal trends
-    insights.push({
-      type: 'suggestion',
-      title: 'Seasonal Opportunity',
-      description: 'Based on historical data, consider stocking up on seasonal items for the upcoming period.',
-      action: 'View Seasonal Trends',
-      priority: 'medium',
+    // Stock levels analysis
+    const stockLevels = {
+      adequate: productList.filter(p => !p.lowStock && p.quantity > p.minQuantity).length,
+      low: productList.filter(p => p.lowStock || p.quantity <= p.minQuantity).length,
+      critical: productList.filter(p => p.quantity === 0).length
+    };
+
+    // Expiry analysis
+    const expiryAnalysis = {
+      fresh: productList.filter(p => !p.nearExpiry && !p.expired && (p.daysToExpiry > 30 || p.daysToExpiry === null)).length,
+      nearExpiry: productList.filter(p => p.nearExpiry || (p.daysToExpiry > 0 && p.daysToExpiry <= 30)).length,
+      expired: productList.filter(p => p.expired || p.daysToExpiry <= 0).length
+    };
+
+    // Generate trend data (mock for now - could be enhanced with historical data)
+    const trends = generateTrendData(totalValue);
+
+    // Alerts
+    const alerts = {
+      lowStock: stockLevels.low,
+      nearExpiry: expiryAnalysis.nearExpiry,
+      expired: expiryAnalysis.expired
+    };
+
+    setAnalytics({
+      totalValue,
+      categoryDistribution: {
+        labels: Object.keys(categoryDistribution),
+        counts: Object.values(categoryDistribution),
+        values: Object.values(categoryValues)
+      },
+      stockLevels,
+      expiryAnalysis,
+      trends,
+      alerts
     });
-
-    setAiInsights(insights);
-
-    // Generate predictions
-    generatePredictions();
   };
 
-  const generatePredictions = () => {
-    // Simulate AI predictions
-    const predictions = {
-      stockout: products.filter(p => p.quantity <= p.minQuantity).map(p => ({
-        product: p.name,
-        daysUntilStockout: Math.max(1, Math.floor(p.quantity / 2)),
-        recommendedOrder: p.minQuantity * 3,
-      })).slice(0, 5),
-      demand: {
-        nextWeek: Math.floor(Math.random() * 20) + 80,
-        nextMonth: Math.floor(Math.random() * 30) + 70,
+  // Generate trend data
+  const generateTrendData = (currentValue) => {
+    const days = parseInt(timeRange);
+    const trends = [];
+    
+    for (let i = days; i >= 0; i--) {
+      const date = dayjs().subtract(i, 'day');
+      const variance = (Math.random() - 0.5) * 0.1; // ±5% variance
+      const value = currentValue * (1 + variance);
+      
+      trends.push({
+        date: date.format('MMM DD'),
+        value: Math.max(0, value),
+        products: Math.floor(Math.random() * 50) + products.length - 25
+      });
+    }
+    
+    return trends;
+  };
+
+  // Process analytics response from backend
+  const processAnalyticsResponse = (data) => {
+    // If backend provides analytics data, use it
+    setAnalytics(prev => ({
+      ...prev,
+      ...data
+    }));
+  };
+
+  // Generate fallback analytics for demo
+  const generateFallbackAnalytics = () => {
+    const fallbackProducts = [
+      {
+        id: 1,
+        name: 'Flour - Whole Wheat',
+        quantity: 45,
+        minQuantity: 20,
+        price: 8.99,
+        totalValue: 404.55,
+        category: 'Grains',
+        lowStock: false,
+        nearExpiry: false,
+        expired: false,
+        daysToExpiry: 45
       },
-      revenue: {
-        projected: products.reduce((sum, p) => sum + (p.quantity * p.price.selling * 0.7), 0),
-        growth: Math.floor(Math.random() * 15) + 5,
+      {
+        id: 2,
+        name: 'Organic Quinoa',
+        quantity: 8,
+        minQuantity: 15,
+        price: 12.50,
+        totalValue: 100.00,
+        category: 'Grains',
+        lowStock: true,
+        nearExpiry: false,
+        expired: false,
+        daysToExpiry: 60
       },
-    };
-    setPredictions(predictions);
+      {
+        id: 3,
+        name: 'Fresh Milk',
+        quantity: 25,
+        minQuantity: 10,
+        price: 3.99,
+        totalValue: 99.75,
+        category: 'Dairy',
+        lowStock: false,
+        nearExpiry: true,
+        expired: false,
+        daysToExpiry: 2
+      }
+    ];
+    
+    setProducts(fallbackProducts);
+    generateAnalytics(fallbackProducts);
+  };
+
+  const handleRefresh = () => {
+    loadAnalyticsData();
   };
 
   // Chart configurations
-  const inventoryTurnoverChart = {
-    labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+  const inventoryTrendChart = {
+    labels: analytics.trends.map(t => t.date),
     datasets: [
       {
-        label: 'Inventory Turnover Ratio',
-        data: [2.5, 2.8, 3.1, 2.9, 3.3, 3.5],
+        label: 'Inventory Value',
+        data: analytics.trends.map(t => t.value),
         borderColor: '#1976d2',
         backgroundColor: 'rgba(25, 118, 210, 0.1)',
         tension: 0.4,
+        fill: true,
       },
     ],
   };
 
-  const demandForecastChart = {
-    labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'],
+  const categoryChart = {
+    labels: analytics.categoryDistribution.labels || [],
     datasets: [
       {
-        label: 'Predicted Demand',
-        data: [85, 92, 88, 95],
-        backgroundColor: '#4caf50',
-        borderColor: '#388e3c',
-        borderWidth: 2,
-        type: 'line',
-        tension: 0.3,
-      },
-      {
-        label: 'Actual Demand',
-        data: [80, 90, 85, null],
-        backgroundColor: 'rgba(255, 152, 0, 0.6)',
-        borderColor: '#f57c00',
-        borderWidth: 2,
-      },
-    ],
-  };
-
-  const categoryPerformanceChart = {
-    labels: [...new Set(products.map(p => p.category))].slice(0, 6),
-    datasets: [
-      {
-        label: 'Revenue by Category',
-        data: [45000, 38000, 32000, 28000, 25000, 20000],
+        data: analytics.categoryDistribution.values || [],
         backgroundColor: [
           '#1976d2',
-          '#388e3c',
-          '#d32f2f',
-          '#f57c00',
-          '#7b1fa2',
-          '#0288d1',
+          '#43a047',
+          '#e53935',
+          '#fb8c00',
+          '#8e24aa',
+          '#00acc1',
+          '#7cb342',
+          '#ffa726'
         ],
+        borderWidth: 2,
+        borderColor: '#fff',
       },
     ],
   };
 
-  const InsightCard = ({ insight }) => {
-    const getIcon = () => {
-      switch (insight.type) {
-        case 'warning':
-          return <TrendingDown color="warning" />;
-        case 'alert':
-          return <Timeline color="error" />;
-        case 'success':
-          return <TrendingUp color="success" />;
-        case 'suggestion':
-          return <Lightbulb color="primary" />;
-        default:
-          return <Psychology color="info" />;
-      }
-    };
-
-    return (
-      <Card sx={{ mb: 2 }}>
-        <CardContent>
-          <Box sx={{ display: 'flex', alignItems: 'flex-start' }}>
-            <Box sx={{ mr: 2 }}>{getIcon()}</Box>
-            <Box sx={{ flexGrow: 1 }}>
-              <Typography variant="h6" gutterBottom>
-                {insight.title}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" paragraph>
-                {insight.description}
-              </Typography>
-              <Button size="small" variant="outlined">
-                {insight.action}
-              </Button>
-            </Box>
-            <Chip
-              label={insight.priority}
-              size="small"
-              color={
-                insight.priority === 'high' ? 'error' :
-                insight.priority === 'medium' ? 'warning' : 'default'
-              }
-            />
-          </Box>
-        </CardContent>
-      </Card>
-    );
+  const stockLevelsChart = {
+    labels: ['Adequate Stock', 'Low Stock', 'Critical'],
+    datasets: [
+      {
+        data: [
+          analytics.stockLevels.adequate || 0,
+          analytics.stockLevels.low || 0,
+          analytics.stockLevels.critical || 0
+        ],
+        backgroundColor: ['#43a047', '#fb8c00', '#e53935'],
+        borderWidth: 2,
+        borderColor: '#fff',
+      },
+    ],
   };
 
-  return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4">
-          AI-Powered Analytics
+  const expiryChart = {
+    labels: ['Fresh', 'Near Expiry', 'Expired'],
+    datasets: [
+      {
+        data: [
+          analytics.expiryAnalysis.fresh || 0,
+          analytics.expiryAnalysis.nearExpiry || 0,
+          analytics.expiryAnalysis.expired || 0
+        ],
+        backgroundColor: ['#43a047', '#fb8c00', '#e53935'],
+        borderWidth: 2,
+        borderColor: '#fff',
+      },
+    ],
+  };
+
+  // Chart options
+  const lineChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        display: false,
+      },
+    },
+    scales: {
+      x: {
+        type: 'category',
+      },
+      y: {
+        type: 'linear',
+        beginAtZero: true,
+        ticks: {
+          callback: (value) => `$${value.toLocaleString()}`,
+        },
+      },
+    },
+  };
+
+  const pieChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'right',
+      },
+    },
+  };
+
+  const formatCurrency = (value) => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    }).format(value || 0);
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <Box sx={{ p: 3, textAlign: 'center' }}>
+        <Typography variant="h6" color="text.secondary">
+          Please sign in to view analytics
         </Typography>
-        <Box sx={{ display: 'flex', gap: 2 }}>
-          <DatePicker
-            label="Start Date"
-            value={dateRange.startDate}
-            onChange={(date) => setDateRange({ ...dateRange, startDate: date })}
-            renderInput={(params) => <TextField {...params} size="small" />}
-          />
-          <DatePicker
-            label="End Date"
-            value={dateRange.endDate}
-            onChange={(date) => setDateRange({ ...dateRange, endDate: date })}
-            renderInput={(params) => <TextField {...params} size="small" />}
-          />
-          <Button
-            variant="outlined"
-            startIcon={<Download />}
-            onClick={() => enqueueSnackbar('Exporting analytics report...', { variant: 'info' })}
-          >
-            Export Report
-          </Button>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ p: 3 }}>
+      {/* Header */}
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+        <Box>
+          <Typography variant="h4" gutterBottom>
+            Analytics & Insights
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Comprehensive analysis of your inventory performance
+          </Typography>
+          {lastFetch && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+              Last updated: {dayjs(lastFetch).format('MMM DD, YYYY HH:mm')}
+            </Typography>
+          )}
+        </Box>
+        <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+          <FormControl size="small" sx={{ minWidth: 120 }}>
+            <InputLabel>Time Range</InputLabel>
+            <Select
+              value={timeRange}
+              label="Time Range"
+              onChange={(e) => setTimeRange(e.target.value)}
+            >
+              <MenuItem value="7">Last 7 days</MenuItem>
+              <MenuItem value="30">Last 30 days</MenuItem>
+              <MenuItem value="90">Last 90 days</MenuItem>
+            </Select>
+          </FormControl>
+          <Tooltip title="Refresh Data">
+            <IconButton onClick={handleRefresh} disabled={loading}>
+              <Refresh />
+            </IconButton>
+          </Tooltip>
         </Box>
       </Box>
 
+      {/* Loading indicator */}
       {loading && <LinearProgress sx={{ mb: 2 }} />}
 
-      <Grid container spacing={3}>
-        {/* AI Insights Section */}
-        <Grid item xs={12} md={4}>
-          <Paper sx={{ p: 3, height: '100%' }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-              <Psychology sx={{ mr: 1 }} />
-              <Typography variant="h6">AI Insights</Typography>
-            </Box>
-            <Box sx={{ maxHeight: 600, overflow: 'auto' }}>
-              {aiInsights.map((insight, index) => (
-                <InsightCard key={index} insight={insight} />
-              ))}
+      {/* Error alert */}
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
+      )}
+
+      {/* Key Metrics */}
+      <Grid container spacing={3} sx={{ mb: 4 }}>
+        <Grid item xs={12} sm={6} md={3}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box>
+                  <Typography color="text.secondary" gutterBottom>
+                    Total Inventory Value
+                  </Typography>
+                  <Typography variant="h4">
+                    {formatCurrency(analytics.totalValue)}
+                  </Typography>
+                </Box>
+                <Assessment sx={{ fontSize: 40, color: 'primary.main' }} />
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box>
+                  <Typography color="text.secondary" gutterBottom>
+                    Low Stock Alerts
+                  </Typography>
+                  <Typography variant="h4" color="warning.main">
+                    {analytics.alerts.lowStock}
+                  </Typography>
+                </Box>
+                <Warning sx={{ fontSize: 40, color: 'warning.main' }} />
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box>
+                  <Typography color="text.secondary" gutterBottom>
+                    Near Expiry
+                  </Typography>
+                  <Typography variant="h4" color="warning.main">
+                    {analytics.alerts.nearExpiry}
+                  </Typography>
+                </Box>
+                <Schedule sx={{ fontSize: 40, color: 'warning.main' }} />
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} sm={6} md={3}>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Box>
+                  <Typography color="text.secondary" gutterBottom>
+                    Expired Items
+                  </Typography>
+                  <Typography variant="h4" color="error.main">
+                    {analytics.alerts.expired}
+                  </Typography>
+                </Box>
+                <Error sx={{ fontSize: 40, color: 'error.main' }} />
+              </Box>
+            </CardContent>
+          </Card>
+        </Grid>
+      </Grid>
+
+      {/* Charts Row 1 */}
+      <Grid container spacing={3} sx={{ mb: 3 }}>
+        <Grid item xs={12} md={8}>
+          <Paper sx={{ p: 3, height: '400px' }}>
+            <Typography variant="h6" gutterBottom>
+              Inventory Value Trend
+            </Typography>
+            <Box sx={{ height: 320 }}>
+              <Line
+                ref={lineChartRef}
+                data={inventoryTrendChart}
+                options={lineChartOptions}
+              />
             </Box>
           </Paper>
         </Grid>
-
-        {/* Charts Section */}
-        <Grid item xs={12} md={8}>
-          <Grid container spacing={3}>
-            {/* Inventory Turnover */}
-            <Grid item xs={12}>
-              <Paper sx={{ p: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                  Inventory Turnover Trend
-                </Typography>
-                <Box sx={{ height: 300 }}>
-                  <Line
-                    data={inventoryTurnoverChart}
-                    options={{
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      plugins: {
-                        legend: {
-                          display: false,
-                        },
-                        tooltip: {
-                          callbacks: {
-                            label: (context) => `Ratio: ${context.parsed.y}x`,
-                          },
-                        },
-                      },
-                    }}
-                  />
-                </Box>
-              </Paper>
-            </Grid>
-
-            {/* Demand Forecast */}
-            <Grid item xs={12} md={6}>
-              <Paper sx={{ p: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                  Demand Forecast
-                </Typography>
-                <Box sx={{ height: 250 }}>
-                  <Bar
-                    data={demandForecastChart}
-                    options={{
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      plugins: {
-                        legend: {
-                          position: 'bottom',
-                        },
-                      },
-                    }}
-                  />
-                </Box>
-              </Paper>
-            </Grid>
-
-            {/* Category Performance */}
-            <Grid item xs={12} md={6}>
-              <Paper sx={{ p: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                  Category Performance
-                </Typography>
-                <Box sx={{ height: 250 }}>
-                  <Doughnut
-                    data={categoryPerformanceChart}
-                    options={{
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      plugins: {
-                        legend: {
-                          position: 'bottom',
-                        },
-                      },
-                    }}
-                  />
-                </Box>
-              </Paper>
-            </Grid>
-          </Grid>
-        </Grid>
-
-        {/* Predictions Section */}
-        <Grid item xs={12}>
-          <Paper sx={{ p: 3 }}>
+        <Grid item xs={12} md={4}>
+          <Paper sx={{ p: 3, height: '400px' }}>
             <Typography variant="h6" gutterBottom>
-              AI Predictions & Recommendations
+              Category Distribution
             </Typography>
-            <Grid container spacing={3}>
-              <Grid item xs={12} md={4}>
-                <Card variant="outlined">
-                  <CardContent>
-                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                      Stockout Predictions
-                    </Typography>
-                    <List dense>
-                      {predictions.stockout?.map((item, index) => (
-                        <ListItem key={index}>
-                          <ListItemText
-                            primary={item.product}
-                            secondary={`Stockout in ${item.daysUntilStockout} days`}
-                          />
-                          <Chip
-                            label={`Order ${item.recommendedOrder}`}
-                            size="small"
-                            color="warning"
-                          />
-                        </ListItem>
-                      ))}
-                    </List>
-                  </CardContent>
-                </Card>
-              </Grid>
+            <Box sx={{ height: 320 }}>
+              <Doughnut
+                ref={doughnutChartRef}
+                data={categoryChart}
+                options={pieChartOptions}
+              />
+            </Box>
+          </Paper>
+        </Grid>
+      </Grid>
 
-              <Grid item xs={12} md={4}>
-                <Card variant="outlined">
-                  <CardContent>
-                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                      Demand Forecast
-                    </Typography>
-                    <Box sx={{ mt: 2 }}>
-                      <Typography variant="body2">
-                        Next Week: <strong>{predictions.demand?.nextWeek}%</strong> of current capacity
-                      </Typography>
-                      <LinearProgress
-                        variant="determinate"
-                        value={predictions.demand?.nextWeek || 0}
-                        sx={{ mt: 1, mb: 2 }}
-                      />
-                      <Typography variant="body2">
-                        Next Month: <strong>{predictions.demand?.nextMonth}%</strong> of current capacity
-                      </Typography>
-                      <LinearProgress
-                        variant="determinate"
-                        value={predictions.demand?.nextMonth || 0}
-                        sx={{ mt: 1 }}
-                      />
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-
-              <Grid item xs={12} md={4}>
-                <Card variant="outlined">
-                  <CardContent>
-                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                      Revenue Projection
-                    </Typography>
-                    <Box sx={{ mt: 2 }}>
-                      <Typography variant="h4" color="primary">
-                        ${predictions.revenue?.projected?.toLocaleString() || '0'}
-                      </Typography>
-                      <Box sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
-                        <TrendingUp color="success" sx={{ mr: 1 }} />
-                        <Typography variant="body2" color="success.main">
-                          +{predictions.revenue?.growth || 0}% growth expected
-                        </Typography>
-                      </Box>
-                    </Box>
-                  </CardContent>
-                </Card>
-              </Grid>
-            </Grid>
+      {/* Charts Row 2 */}
+      <Grid container spacing={3}>
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, height: '400px' }}>
+            <Typography variant="h6" gutterBottom>
+              Stock Level Analysis
+            </Typography>
+            <Box sx={{ height: 320 }}>
+              <Pie
+                ref={pieChartRef}
+                data={stockLevelsChart}
+                options={pieChartOptions}
+              />
+            </Box>
+          </Paper>
+        </Grid>
+        <Grid item xs={12} md={6}>
+          <Paper sx={{ p: 3, height: '400px' }}>
+            <Typography variant="h6" gutterBottom>
+              Expiry Status Analysis
+            </Typography>
+            <Box sx={{ height: 320 }}>
+              <Pie
+                ref={barChartRef}
+                data={expiryChart}
+                options={pieChartOptions}
+              />
+            </Box>
           </Paper>
         </Grid>
       </Grid>

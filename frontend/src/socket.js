@@ -1,8 +1,30 @@
-import { io } from 'socket.io-client';
+// src/socket.js - Updated to use stable socket
+import stableSocket from './socket/index';
 
-const socket = io(process.env.REACT_APP_SERVER_URL || 'http://localhost:5000', {
-  withCredentials: true,
-  autoConnect: false, // Only connect when needed
-});
+// Re-export the stable socket instance
+export default stableSocket;
 
-export default socket; 
+// Optional: Add convenience methods if needed
+export const connectSocket = (url) => {
+  return stableSocket.connect(url);
+};
+
+export const disconnectSocket = () => {
+  stableSocket.disconnect();
+};
+
+export const emitEvent = (event, data) => {
+  stableSocket.emit(event, data);
+};
+
+export const onEvent = (event, callback) => {
+  stableSocket.on(event, callback);
+};
+
+export const offEvent = (event, callback) => {
+  stableSocket.off(event, callback);
+};
+
+export const isSocketConnected = () => {
+  return stableSocket.connected;
+};
